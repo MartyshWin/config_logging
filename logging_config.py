@@ -7,7 +7,7 @@ class ColoredFormatter(logging.Formatter):
     Конфиг для логирования с поддержкой цветного вывода.
     """
     # Цветовые коды ANSI для уровней логирования
-    COLORS = {
+    COLORS: dict[str, str] = {
         "DEBUG": "\033[94m",    # Синий
         "INFO": "\033[92m",     # Зеленый
         "SUCCESS": "\033[96m",  # Ярко-голубой (Добавили новый уровень логирования)
@@ -15,51 +15,74 @@ class ColoredFormatter(logging.Formatter):
         "ERROR": "\033[91m",    # Красный
         "CRITICAL": "\033[95m"  # Фиолетовый
     }
-    TIME_COLOR = "\033[97m"    # Белый
-    FILENAME_COLOR = "\033[97m"  # Белый
-    LINENO_COLOR = "\033[97m"  # Белый
-    RESET = "\033[0m"          # Сброс цвета
+    TIME_COLOR = FILENAME_COLOR = LINENO_COLOR = "\033[97m"  # Белый
+    RESET = "\033[0m"    # Сброс цвета
 
-    def format(self, record):
-        # Форматируем время
-        formatted_time = f"{self.TIME_COLOR}{self.formatTime(record, self.datefmt)}{self.RESET}"
+    def format(self, record: logging.LogRecord) -> str:
+        """
+        Собирает итоговую строку лога с цветами и «человеческим» расположением
+        частей сообщения.
 
-        # Получаем цвет для уровня логирования
-        level_color = self.COLORS.get(record.levelname, self.RESET)
+        Алгоритм по шагам
+        -----------------
+        1. ts   ― дата-время события
+           * self.formatTime() берёт formatTime из базового Formatter.
+           * self.datefmt задаётся при создании ColoredFormatter
+             (у вас это "%Y-%m-%d %H:%M:%S").
+           * TIME_COLOR / RESET — ANSI-коды белого текста и сброса цвета.
 
-        # Форматируем уровень, имя файла и номер строки с цветами
-        levelname = f"{level_color}({record.levelname}){self.RESET}"
-        filename = f"{self.FILENAME_COLOR}{record.filename}{self.RESET}"
-        lineno = f"{self.LINENO_COLOR}{record.lineno}{self.RESET}"
-        file_info = f"[{filename}:{lineno}]"
+        2. lvl  ― уровень логирования
+           * record.levelname — строка "DEBUG", "INFO", …
+           * По levelname достаём цвет из словаря COLORS.
+           * Окружая levelname скобками «(INFO)», делаем его более заметным.
 
-        # Получаем сообщение, учитывая сложные аргументы
-        if record.args:
-            message = record.getMessage()  # Обрабатывает message и args автоматически
-        else:
-            message = record.msg
+        3. file ― откуда пришло сообщение
+           * record.filename  — файл, где вызвали логгер.
+           * record.lineno    — номер строки.
+           * FILENAME_COLOR и LINENO_COLOR тоже белые, чтобы не спорили с lvl.
 
-        # Добавляем цвет к сообщению
-        message = f"{level_color}{message}{self.RESET}"
+        4. msg  ― само сообщение
+           * record.getMessage() корректно подставит все %-форматные аргументы
+             или f-строки, переданные в logger.info(...).
+           * Для консистентности красим текст тем же цветом, что и уровень.
 
-        # Если это ошибка, добавляем информацию о месте возникновения
-        if record.exc_info:
-            exception_info = traceback.format_exception(*record.exc_info)
-            exception_trace = "".join(exception_info).strip()
-            exception_trace = f"{self.COLORS['ERROR']}Traceback (most recent call last):\n{exception_trace}{self.RESET}"
-        else:
-            exception_trace = ""
+        5. exc  ― traceback (если был передан exc_info)
+           * traceback.format_exception() превращает кортеж exc_info
+             в список строк с переносами.
+           * Склеиваем, красим «ошибочным» цветом (красным) и добавляем \n
+             перед первым символом, чтобы стек оказался на новой строке.
 
-        # Формируем итоговое сообщение
-        formatted_message = (f"{formatted_time} --- {levelname} {file_info} == {message}\n{exception_trace}").strip()
-        return formatted_message
+        6. Возврат
+           * Склеиваем всё одним f-string:
+             ┌ ts ────────────────────┐
+             │ 2025-06-13 22:10:01    │
+             └────────────────────────┘
+             ---                       ← визуальный разделитель
+             (INFO)                    ← lvl
+             [main.py:42]              ← файл и строка
+             ==                        ← ещё один разделитель
+             Заголовок сообщения       ← msg
+             \nTraceback … (если есть) ← exc
+        """
+        ts = f"{self.TIME_COLOR}{self.formatTime(record, self.datefmt)}{self.RESET}" # Форматируем время
+        lvl = f"{self.COLORS.get(record.levelname, self.RESET)}({record.levelname}){self.RESET}" # Получаем цвет для уровня логирования
+        file = f"[{self.FILENAME_COLOR}{record.filename}{self.RESET}:{self.LINENO_COLOR}{record.lineno}{self.RESET}]" # Форматируем уровень, имя файла и номер строки с цветами
+        msg = record.getMessage()
+        msg = f"{self.COLORS.get(record.levelname, self.RESET)}{msg}{self.RESET}"
+
+        exc = ""
+        if record.exc_info: # Получаем сообщение, учитывая сложные аргументы
+            exc_lines = traceback.format_exception(*record.exc_info)
+            exc = f"\n{self.COLORS['ERROR']}{''.join(exc_lines).strip()}{self.RESET}"
+
+        return f"{ts} --- {lvl} {file} == {msg}{exc}"
 
 
-def add_success_level():
+def add_success_level() -> None:
     """
     Добавляем новый уровень (SUCCESS) к стандартному модулю logging.
     """
-    SUCCESS_LEVEL = 25  # Уровень между INFO (20) и WARNING (30)
+    SUCCESS_LEVEL: int = 25  # Уровень между INFO (20) и WARNING (30)
     logging.addLevelName(SUCCESS_LEVEL, "SUCCESS")
 
     def success(self, message, *args, **kwargs):
